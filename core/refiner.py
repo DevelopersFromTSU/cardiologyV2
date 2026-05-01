@@ -3,91 +3,90 @@ import requests
 import json
 import os
 from dotenv import load_dotenv
+from google import genai
+from utils.abbreviations import force_expand_abbreviations
+import time
 
 load_dotenv()
 
-FOLDER_ID = os.getenv("FOLDER_ID")
-API_KEY = os.getenv("API_KEY")
+os.environ['HTTPS_PROXY'] = os.getenv('HTTPS_PROXY', '')
+os.environ['HTTP_PROXY'] = os.getenv('HTTP_PROXY', '')
 
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
-def normalize_markdown_table(text):
-    text = re.sub(r'\|[-]{5,}\|', '|---|', text)
-    text = re.sub(r'\s*\|\s*', ' | ', text)
-    text = re.sub(r' {2,}', ' ', text)
-    return text
-
-
-def minify_markdown_table_dashes(text):
-    """Жестко пересобирает разделители таблиц на |-| с помощью Python, без нейросетей."""
+def clean_excessive_whitespace(text):
     if not text:
         return text
+    # 1. Заменяем 3 и более переносов строк на стандартные 2
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # 2. Убираем пробелы и табуляцию в конце строк
+    text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
+    # 3. Заменяем 2+ пробела между словами на один, сохраняя отступы в начале строк.
+    # Используем positive lookbehind (?<=\S), чтобы искать пробелы только ПОСЛЕ символов
+    text = re.sub(r'(?<=\S)[ \t]{2,}', ' ', text)
+    return text
 
-    lines = text.split('\n')
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        # Ищем строку-разделитель (содержит только пробелы, |, -, :)
-        if '|' in stripped and '-' in stripped and re.match(r'^[\s\|\-:]+$', stripped):
-            # Считаем количество столбцов по символу |
-            cols = stripped.count('|') - 1
-            if cols > 0:
-                # Собираем новую строку ровно с одним тире
-                lines[i] = '|' + '|'.join(['-'] * cols) + '|'
+# def minify_markdown_table_dashes(text):
+#     if not text:
+#         return text
+#     lines = text.split('\n')
+#     for i, line in enumerate(lines):
+#         stripped = line.strip()
+#         if '|' in stripped and '-' in stripped and re.match(r'^[\s\|\-:]+$', stripped):
+#             cols = stripped.count('|') - 1
+#             if cols > 0:
+#                 lines[i] = '|' + '|'.join(['-'] * cols) + '|'
+#     return '\n'.join(lines)
 
-    return '\n'.join(lines)
 
+def refine_medical_chunk(chunk_text, max_retries=3):
+    model_id = "gemini-2.5-flash"  # Рекомендую 2.0, так как на него у тебя настроены квоты
 
-def refine_medical_chunk(chunk_text):
-    chunk_text = normalize_markdown_table(chunk_text)
-    url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Api-Key {API_KEY}"
-    }
+    sys_instr = (
+        "Ты — строгий технический редактор и медицинский аналитик. "
+        "Твоя задача:\n"
+        "1. ИСПРАВЛЕНИЕ: Устрани опечатки и грамматические ошибки.\n"
+        "2. ПРЕОБРАЗОВАНИЕ ТАБЛИЦ: Если в тексте есть Markdown-таблицы (|---|), ПЕРЕПИШИ их в виде логических цепочек со стрелками `->`. "
+        "Каждая строка должна быть самодостаточной: сочетай заголовок строки, заголовок столбца и значение в одно предложение.\n"
+        "3. СОХРАНЕНИЕ СТРУКТУРЫ: В уже существующих алгоритмах строго сохраняй вложенность списков и стрелки.\n"
+        "4. ФОРМАТ: Верни результат СТРОГО в формате JSON."
+    )
 
-    prompt = """
-    Ты — строгий технический редактор медицинской документации. Твоя единственная задача: исправить опечатки и грамматику в тексте, СТРОГО сохранив исходную Markdown-разметку.
-    1. ЗАГОЛОВКИ: ОРИГИНАЛЬНЫЕ заголовки копируй без изменений.
-    2. ИНТЕГРАЦИЯ: Вставь данные из блоков [[MEDICAL_ALGORITHM...]] сразу под соответствующий заголовок, убрав сами маркеры.
-    3. НИКАКОЙ ОТСЕБЯТИНЫ: Только сухой Markdown.
-
-    ВЕРНИ СТРОГИЙ JSON:
+    json_prompt = """
     {
-        "refined_text": "исправленный текст в Markdown",
+        "refined_text": "исправленный текст",
         "category": "диагностика/лечение",
-        "keywords": ["ключ1", "ключ2"]
+        "keywords": ["ключ1"]
     }
     """
 
-    body = {
-        "modelUri": f"gpt://{FOLDER_ID}/yandexgpt/latest",
-        "completionOptions": {
-            "stream": False,
-            "temperature": 0.1,
-            "maxTokens": "8000"
-        },
-        "messages": [
-            {"role": "system", "text": prompt},
-            {"role": "user", "text": chunk_text}
-        ]
-    }
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=model_id,
+                # ЗАМЕНИ expanded_text на chunk_text
+                contents=f"Обработай следующий текст и верни его в формате {json_prompt}:\n\n{chunk_text}",
+                # ИСПРАВЛЕНИЕ 2: Исправили отступы
+                config={
+                    "system_instruction": sys_instr,
+                    "response_mime_type": "application/json",
+                    "temperature": 0.1
+                }
+            )
 
-    try:
-        response = requests.post(url, headers=headers, json=body)
-        if response.status_code != 200:
-            print(f"❌ Детали ошибки от Яндекса: {response.text}")
-        response.raise_for_status()
+            data = json.loads(response.text)
 
-        raw_result = response.json()['result']['alternatives'][0]['message']['text']
-        clean_json_str = raw_result.strip().replace('```json', '').replace('```', '')
+            if "refined_text" in data:
+                # 2. Затем вычищаем весь мусорный пробел, сохраняя отступы списков
+                data["refined_text"] = clean_excessive_whitespace(data['refined_text'])
 
-        data = json.loads(clean_json_str)
+            return data
 
-        # Подключаем Лайт-модель для финальной зачистки тире
-        if "refined_text" in data:
-            data["refined_text"] = minify_markdown_table_dashes(data["refined_text"])
+        except Exception as e:
+            # ИСПРАВЛЕНИЕ 3: Починили логику повторов
+            print(f"⚠️ Ошибка Gemini (попытка {attempt + 1}/{max_retries}): {e}")
+            time.sleep(15)  # Ждем перед следующей попыткой
 
-        return data
-
-    except Exception as e:
-        print(f"❌ Ошибка при обработке чанка в YandexGPT: {e}")
-        return None
+    # Если цикл закончился, а return data не сработал
+    print("❌ Не удалось обработать текст после всех попыток.")
+    return None

@@ -23,21 +23,22 @@ def inject_vision_data(md_text, image_paths):
 
 
 def run_pipeline(start_p, end_p):
+    # 1. Получаем Markdown и картинки[cite: 3]
     raw_markdown, image_paths = parse_pdf_pro(BOOK_PATH, start_p, end_p)
 
-    # Инъекция визуальных данных до разбивки на чанки
+    # 2. Вставляем данные из Vision
     full_text = inject_vision_data(raw_markdown, image_paths)
 
-    chunks = re.split(r'\n(?=# )', full_text)
+    # 3. Расширяем аббревиатуры по всей странице[cite: 8]
+    full_text_expanded = force_expand_abbreviations(full_text)
 
-    for i, chunk in enumerate(chunks):
-        if not chunk.strip(): continue
+    # 4. Отправляем ВСЮ страницу в рефайнер (без сплита)
+    # ВАЖНО: Убедись, что модель 2.0 Flash потянет объем страницы (обычно да)
+    refined_page = refine_medical_chunk(full_text_expanded)
 
-        expanded = force_expand_abbreviations(chunk)
-        refined_data = refine_medical_chunk(expanded)
-
-        if refined_data:
-            save_chunk_to_folder(refined_data, f"chunk_{start_p}_{i + 1:03d}.json")
+    if refined_page:
+        # Сохраняем как один большой файл страницы
+        save_chunk_to_folder(refined_page, f"page_{start_p}_full.json")
 
 
 if __name__ == "__main__":

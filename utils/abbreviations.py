@@ -6,7 +6,7 @@ def force_expand_abbreviations(text):
     Принудительно расшифровывает медицинские аббревиатуры в тексте.
     """
     medical_dict = {
-         r'\bАГ\b': 'артериальная гипертензия (АГ)',
+        r'\bАГ\b': 'артериальная гипертензия (АГ)',
         r'\bАГП\b': 'антигипертензивные препараты (АГП)',
         r'\bАГТ\b': 'антигипертензивная лекарственная терапия (АГТ)',
         r'\bАГЭ\b': 'антигипертензивный эффект (АГЭ)',
@@ -103,9 +103,11 @@ def force_expand_abbreviations(text):
         r'\bЭКГ\b': 'электрокардиограмма (ЭКГ)',
         r'\bЭхоКГ\b': 'эхокардиография (ЭхоКГ)'
     }
-
     processed_text = text
-    for pattern, expansion in medical_dict.items():
+    for abbr, expansion in medical_dict.items():
+        # Ищем аббревиатуру как отдельное слово \b
+        # И проверяем, что перед ней нет скобки \( и после нее нет скобки \)
+        pattern = rf'(?<!\()\b{abbr}\b(?!\))'
         processed_text = re.sub(pattern, expansion, processed_text)
 
     return processed_text
