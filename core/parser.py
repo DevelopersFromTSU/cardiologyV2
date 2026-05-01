@@ -1,42 +1,47 @@
 import os
 import fitz
-import re
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 
 
-def parse_pdf_to_markdown(pdf_path, start_page=1, end_page=1):
-    """
-    Парсит выбранные страницы PDF в Markdown.
-    """
+def parse_pdf_pro(pdf_path, start_page=1, end_page=1):
     temp_pdf = "temp_slice.pdf"
+    output_dir = "temp_images"
+    os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Сначала создаем временный файл только с нужными страницами
-    # Это "золотой стандарт", так как Docling не будет сканировать лишнее
     with fitz.open(pdf_path) as src:
         with fitz.open() as dest:
             dest.insert_pdf(src, from_page=start_page - 1, to_page=end_page - 1)
             dest.save(temp_pdf)
 
-    # 2. Настраиваем Docling на работу с этим срезом
     pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = True  # Включаем OCR для сложных таблиц
+    pipeline_options.do_ocr = True
+    pipeline_options.generate_picture_images = True  # Включаем захват картинок
 
     converter = DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-        }
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)}
     )
 
-    print(f"⌛ Парсинг текста и таблиц (стр. {start_page}-{end_page})...")
     result = converter.convert(temp_pdf)
     md_text = result.document.export_to_markdown()
 
-    # 3. Чистим текст от тегов картинок и удаляем временный файл
-    md_text = re.sub(r"", "", md_text)
+    image_paths = []
+    seen_dimensions = set()
+
+    for i, picture in enumerate(result.document.pictures):
+        if picture.image is not None:
+            pil_img = picture.image.pil_image
+            w, h = pil_img.size
+
+            # Фильтрация по ширине и высоте
+            if (w, h) not in seen_dimensions:
+                seen_dimensions.add((w, h))
+                img_path = os.path.join(output_dir, f"img_{start_page}_{i}.png")
+                pil_img.save(img_path)
+                image_paths.append(img_path)
 
     if os.path.exists(temp_pdf):
         os.remove(temp_pdf)
 
-    return md_text
+    return md_text, image_paths
