@@ -69,38 +69,29 @@ def process_and_upload_to_qdrant(refined_data, page_num):
     if not text:
         return
 
+    # Получаем документы (текст + метаданные заголовков)[cite: 11]
     chunks = get_smart_chunks(text)
     points = []
 
     for i, chunk_doc in enumerate(chunks):
         chunk_text = chunk_doc.page_content
+        # Вытаскиваем заголовки, которые нашел Markdown splitter[cite: 11]
         chunk_headers = chunk_doc.metadata
-
-        # --- НОВАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ СТРАНИЦЫ ---
-        current_page = page_num  # По умолчанию берем то, что пришло (0)
-
-        # Ищем номер страницы в заголовках (Header 1 или Header 2)
-        for header_value in chunk_headers.values():
-            if "Страница" in header_value:
-                # Вытаскиваем только цифры из строки "Страница 188"
-                match = re.search(r'\d+', header_value)
-                if match:
-                    current_page = int(match.group())
-                    break
-        # ----------------------------------------
 
         vector = get_embedding(chunk_text)
         point_id = str(uuid.uuid4())
 
+        # Формируем payload[cite: 5, 11]
         payload = {
             "text": chunk_text,
-            "page": current_page,  # Теперь здесь будет реальный номер страницы
+            "page": page_num, # ГАРАНТИРОВАННО верная страница из аргумента функции
             "chunk_index": i
         }
+        # Добавляем найденные "Header 2" или "Header 3" в payload[cite: 11]
         payload.update(chunk_headers)
 
         points.append(PointStruct(id=point_id, vector=vector, payload=payload))
 
     if points:
         qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
-        print(f"✅ Успешно загружено {len(points)} чанков с корректными номерами страниц.")
+        print(f"✅ Страница {page_num}: загружено {len(points)} умных чанков.")
