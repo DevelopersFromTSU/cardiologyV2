@@ -1,14 +1,34 @@
 import re
 import os
 import time  # <-- НОВЫЙ ИМПОРТ
+import json
 
 from core.parser import parse_pdf_pro
 from core.vision import describe_image
 from core.refiner import refine_medical_chunk
 from utils.abbreviations import force_expand_abbreviations
-from step3_saver import save_chunk_to_folder
 
 BOOK_PATH = "./data/Артериальная гипертония 2024 РКО.pdf"
+
+
+def save_chunk_to_folder(chunk_data, filename):
+    """
+    Создает папку result и сохраняет туда данные в формате JSON.
+    """
+    folder_name = "result"
+
+    # Автоматически создаем папку, если её нет
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+        print(f"📁 Создана папка: {folder_name}/")
+
+    file_path = os.path.join(folder_name, filename)
+
+    with open(file_path, "w", encoding="utf-8") as file:
+        # indent=4 делает файл читаемым, ensure_ascii=False сохраняет кириллицу
+        json.dump(chunk_data, file, ensure_ascii=False, indent=4)
+
+    print(f"✅ Результат сохранен: {file_path}")
 
 
 def inject_vision_data(md_text, image_paths):
@@ -39,12 +59,11 @@ def run_pipeline(start_p, end_p):
 
         # <-- НОВЫЕ СТРОЧКИ: Проверяем, не последняя ли это страница, и делаем паузу
         if current_page < end_p:
-            delay_minutes = 2
+            delay_minutes = 1
             delay_seconds = delay_minutes * 60
             print(f"⏳ Пауза {delay_minutes} мин. для сброса лимитов API Gemini...")
             time.sleep(delay_seconds)
 
 
 if __name__ == "__main__":
-
-    run_pipeline(184, 188)
+    run_pipeline(9, 109)

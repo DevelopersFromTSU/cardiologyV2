@@ -11,6 +11,7 @@ os.environ['HTTP_PROXY'] = os.getenv('HTTP_PROXY', '')
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
+
 def describe_image(image_path):
     if not os.path.exists(image_path):
         return ""
@@ -39,7 +40,7 @@ def describe_image(image_path):
                 contents=[img],
                 config={
                     "system_instruction": sys_instr,
-                    "temperature": 0.0, # Для OCR лучше ставить 0, чтобы исключить фантазии
+                    "temperature": 0.0,  # Для OCR лучше ставить 0, чтобы исключить фантазии
                 }
             )
             return f"\n\n{response.text}\n\n"
