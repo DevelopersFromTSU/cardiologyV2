@@ -16,8 +16,8 @@ COLLECTION_NAME = "medical_docs"
 # Подключаемся к Qdrant (через Docker)
 qdrant = QdrantClient(url="http://localhost:6333")
 
-print("Загрузка медицинской модели RuBioRoBERTa... (при первом запуске может занять время)")
-model = SentenceTransformer('alexyalunin/RuBioRoBERTa')
+print("⏳ Загрузка мощной модели для эмбеддингов...")
+model = SentenceTransformer('intfloat/multilingual-e5-base')
 model.max_seq_length = 512
 print("Модель успешно загружена!")
 
@@ -68,7 +68,7 @@ def merge_small_chunks(chunks, min_size=300):
 
     return merged_chunks
 
-def init_qdrant(vector_size=1024):
+def init_qdrant(vector_size=768):
     """Создает коллекцию, если ее еще нет."""
     if not qdrant.collection_exists(COLLECTION_NAME):
         qdrant.create_collection(
@@ -93,7 +93,8 @@ def get_smart_chunks(text, chunk_size=1200, chunk_overlap=300):
     char_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ". ", " ", ""]
+        separators=["\n\n", "\n", ". ", " ", ""],
+        keep_separator=True
     )
 
     return char_splitter.split_documents(md_splits)
@@ -114,10 +115,10 @@ def process_and_upload(text_to_upload, page_keywords, page_num):
 
     for i, chunk_doc in enumerate(chunks):
         chunk_text = chunk_doc.page_content
-        # Вытаскиваем заголовки, которые нашел Markdown splitter
         chunk_headers = chunk_doc.metadata
 
-        vector = get_embedding(chunk_text)
+        # <-- НОВЫЕ СТРОЧКИ: Добавляем префикс passage: для документов
+        vector = model.encode("passage: " + chunk_text).tolist()
         point_id = str(uuid.uuid4())
 
         # Формируем payload
@@ -152,15 +153,37 @@ def run_vectorization():
             text_to_upload = current_data.get("refined_text", "")
             page_keywords = current_data.get("keywords", [])
 
-        # 2. РЕАЛИЗАЦИЯ НАХЛЕСТА: заглядываем в следующий файл
         if i + 1 < len(files):
             next_page_num = page_num + 1
             next_filepath = os.path.join(JSON_FOLDER, files[i + 1])
             with open(next_filepath, 'r', encoding='utf-8') as f_next:
                 next_data = json.load(f_next)
                 next_text = next_data.get("refined_text", "")
-                # Берем начало следующей страницы (первые 500 символов)
-                overlap_text = next_text[:500]
+
+                # Берем сырые 500 символов
+                raw_overlap = next_text[:500]
+
+                # <-- НОВЫЕ СТРОЧКИ: Учитываем списки (;) и переносы строк
+                # Ищем точку, !, ? или точку с запятой (;), после которых идет пробел или конец строки
+                matches = list(re.finditer(r'[.!?;](?=\s|$)', raw_overlap))
+
+                if matches:
+                    # Отрезаем ровно по этот знак включительно (+1)
+                    last_punctuation = matches[-1].start()
+                    overlap_text = raw_overlap[:last_punctuation + 1]
+                else:
+                    # Предохранитель 1: режем по последнему абзацу/переносу строки
+                    last_newline = raw_overlap.rfind('\n')
+                    if last_newline != -1:
+                        overlap_text = raw_overlap[:last_newline]
+                    else:
+                        # Предохранитель 2 (Абсолютный): режем по последнему пробелу, чтобы не рвать слова
+                        last_space = raw_overlap.rfind(' ')
+                        if last_space != -1:
+                            overlap_text = raw_overlap[:last_space]
+                        else:
+                            overlap_text = raw_overlap
+
                 text_to_upload += f"\n\n--- НАЧАЛО СТРАНИЦЫ {next_page_num} ---\n\n" + overlap_text
 
         # 3. Отправляем в базу
