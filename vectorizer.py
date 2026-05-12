@@ -89,11 +89,17 @@ def get_smart_chunks(text, chunk_size=1200, chunk_overlap=300):
     markdown_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=headers_to_split_on)
     md_splits = markdown_splitter.split_text(text)
 
-    # 2. Затем режем длинные абзацы по символам
     char_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        separators=["\n\n", "\n", ". ", " ", ""],
+        chunk_size=1200,
+        chunk_overlap=300,
+        separators=[
+            "\n\n",  # 1. Приоритет: режем строго по абзацам
+            "(?<=[.!?]) +",  # 2. Если абзац большой: режем по концам предложений (точка/вопрос/воскл. знак + пробелы)
+            "(?<=;) +",  # 3. Для медицинских списков: режем по точке с запятой
+            " ",  # 4. Крайний случай: режем по пробелам (чтобы не рвать слова)
+            ""  # 5. Только если слово длиннее 1200 символов (почти нереально)
+        ],
+        is_separator_regex=True,  # <-- ВАЖНО: Включаем режим регулярных выражений
         keep_separator=True
     )
 

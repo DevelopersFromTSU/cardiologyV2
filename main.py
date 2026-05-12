@@ -66,4 +66,4 @@ def run_pipeline(start_p, end_p):
 
 
 if __name__ == "__main__":
-    run_pipeline(30, 109)
+    run_pipeline(39, 109)
